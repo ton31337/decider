@@ -17,9 +17,9 @@ check:
 	golines -w ./
 	golangci-lint run
 
-linux-client:
+linux:
 	@-go build -o decider
 clean:
 	rm -f ./decider
 
-.DEFAULT_GOAL := linux-client
+.DEFAULT_GOAL := linux
