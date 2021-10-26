@@ -27,8 +27,10 @@ var probeInterval = flag.Duration("probeInterval", time.Second, "Interval betwee
 var dryRun = flag.Bool("dryRun", true, "Dry-run mode")
 
 type Decider struct {
-	logger    *zap.Logger
-	Neighbors Neighbors
+	logger      *zap.Logger
+	Neighbors   Neighbors
+	Routes      map[string]netlink.Route
+	Destination string
 }
 
 type Neighbors map[string]struct {
@@ -116,36 +118,20 @@ func (n *Neighbor) undrain() error {
 	return err
 }
 
-func (n *Neighbor) deleteRoute(nr *netlink.Route) {
-	netlink.RouteDel(nr)
-}
-
 func (n *Neighbor) failed() bool {
 	return n.Failures > *failuresCount
 }
 
-func (n *Neighbor) createRoute(dst string) error {
+func (d *Decider) createRoute(nr netlink.Route) error {
 	var err error
 
 	if *dryRun {
 		return err
 	}
 
-	nr := netlink.Route{
-		Dst: &net.IPNet{
-			IP:   net.ParseIP(dst),
-			Mask: net.IPv4Mask(255, 255, 255, 255),
-		},
-		Src:      net.ParseIP(n.LocalIP),
-		Protocol: unix.RTPROT_KERNEL,
-		Table:    unix.RT_TABLE_MAIN,
-		Type:     unix.RTN_UNICAST,
-		Gw:       net.ParseIP(n.RemoteIP),
-	}
-
 	err = netlink.RouteReplace(&nr)
 	if err != nil {
-		n.deleteRoute(&nr)
+		return err
 	}
 
 	return err
@@ -154,6 +140,13 @@ func (n *Neighbor) createRoute(dst string) error {
 func (d *Decider) undrainAll() {
 	for _, neighbor := range d.Neighbors {
 		neighbor.undrain()
+	}
+	d.removeAllRoutes()
+}
+
+func (d *Decider) removeAllRoutes() {
+	for _, route := range d.Routes {
+		netlink.RouteDel(&route)
 	}
 }
 
@@ -173,16 +166,17 @@ func (d *Decider) allNeighborsFailed() bool {
 	return count == len(d.Neighbors)
 }
 
-func (d *Decider) Run(dst string) {
+func (d *Decider) Run() {
 	for _, neighbor := range d.Neighbors {
-		if err := neighbor.createRoute(dst); err != nil {
-			d.logger.Error("unable to create static route", zap.Error(err), zap.Any("Destination", dst))
+		nr := d.Routes[neighbor.RemoteIP]
+		if err := d.createRoute(nr); err != nil {
+			d.logger.Error("unable to create static route", zap.Error(err))
 		}
 
 		sPort := *startSrcPort
 		for !neighbor.failed() && sPort < *endSrcPort {
 			d.logger.Debug("Probing connection",
-				zap.String("Destination", dst),
+				zap.String("Destination", d.Destination),
 				zap.String("Source", neighbor.LocalIP),
 				zap.String("Via", neighbor.RemoteIP),
 				zap.Int("Failures", neighbor.Failures),
@@ -192,7 +186,7 @@ func (d *Decider) Run(dst string) {
 				IP:   net.ParseIP("0.0.0.0"),
 				Port: sPort,
 			}, &net.TCPAddr{
-				IP:   net.ParseIP(dst),
+				IP:   net.ParseIP(d.Destination),
 				Port: 9100,
 			})
 			if err != nil {
@@ -216,7 +210,7 @@ func (d *Decider) Run(dst string) {
 			conn.Close()
 
 			d.logger.Debug("Successful connection",
-				zap.String("Destination", dst),
+				zap.String("Destination", d.Destination),
 				zap.String("Source", neighbor.LocalIP),
 				zap.String("Via", neighbor.RemoteIP),
 				zap.Int("SourcePort", sPort))
@@ -249,7 +243,7 @@ func (d *Decider) Run(dst string) {
 	}
 }
 
-func newDecider() (*Decider, error) {
+func newDecider(dst string) (*Decider, error) {
 	logger, _ := zap.Config{
 		Encoding:    "json",
 		Level:       zap.NewAtomicLevelAt(zapcore.DebugLevel),
@@ -261,23 +255,46 @@ func newDecider() (*Decider, error) {
 		},
 	}.Build()
 
-	s := &Decider{
-		logger:    logger,
-		Neighbors: Neighbors{},
+	d := &Decider{
+		logger:      logger,
+		Neighbors:   Neighbors{},
+		Routes:      make(map[string]netlink.Route),
+		Destination: dst,
 	}
 
 	neighbors, err := getNeighbors()
 	if err != nil {
-		return s, err
+		return d, err
 	}
-
 	if len(neighbors) == 0 {
-		return s, errors.New("no BGP neighbors")
+		return d, errors.New("no BGP neighbors")
+	}
+	d.Neighbors = neighbors
+
+	d.Routes = createRoutes(neighbors, dst)
+
+	return d, nil
+}
+
+func createRoutes(neighbors Neighbors, dst string) map[string]netlink.Route {
+	routes := make(map[string]netlink.Route)
+
+	for _, neighbor := range neighbors {
+		nr := netlink.Route{
+			Dst: &net.IPNet{
+				IP:   net.ParseIP(dst),
+				Mask: net.IPv4Mask(255, 255, 255, 255),
+			},
+			Src:      net.ParseIP(neighbor.LocalIP),
+			Protocol: unix.RTPROT_KERNEL,
+			Table:    unix.RT_TABLE_MAIN,
+			Type:     unix.RTN_UNICAST,
+			Gw:       net.ParseIP(neighbor.RemoteIP),
+		}
+		routes[neighbor.RemoteIP] = nr
 	}
 
-	s.Neighbors = neighbors
-
-	return s, nil
+	return routes
 }
 
 func getNeighbors() (Neighbors, error) {
@@ -314,7 +331,7 @@ func main() {
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
-	d, err := newDecider()
+	d, err := newDecider(dst)
 	if err != nil {
 		d.logger.Error("unable to create Decider object", zap.Error(err))
 		return
@@ -341,7 +358,7 @@ func main() {
 
 	d.undrainAll()
 	for {
-		d.Run(dst)
+		d.Run()
 		time.Sleep(1 * time.Second)
 	}
 }
