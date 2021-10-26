@@ -33,6 +33,11 @@ type Neighbors map[string]struct {
 	Neighbor
 }
 
+type IPv4Unicast struct {
+	RouteMapIncoming string `json:"routeMapForIncomingAdvertisements"`
+	RouteMapOutgoing string `json:"routeMapForOutgoingAdvertisements"`
+}
+
 type Neighbor struct {
 	RemoteAS int    `json:"remoteAs"`
 	LocalAS  int    `json:"localAs"`
@@ -40,12 +45,25 @@ type Neighbor struct {
 	LocalIP  string `json:"hostLocal"`
 	RemoteIP string `json:"hostForeign"`
 	Af       struct {
-		IPv4Unicast struct {
-			RouteMapIncoming string `json:"routeMapForIncomingAdvertisements"`
-			RouteMapOutgoing string `json:"routeMapForOutgoingAdvertisements"`
-		} `json:"ipv4Unicast"`
+		IPv4Unicast    *IPv4Unicast `json:"ipv4Unicast"`
+		IPv4UnicastOld *IPv4Unicast `json:"IPv4 Unicast"`
 	} `json:"addressFamilyInfo"`
 	Failures int
+}
+
+func (n *Neighbor) IPv4Unicast() IPv4Unicast {
+	if n.Af.IPv4Unicast == nil {
+		return *n.Af.IPv4UnicastOld
+	}
+	return *n.Af.IPv4Unicast
+}
+
+func (n Neighbor) RouteMapIncoming() string {
+	return n.IPv4Unicast().RouteMapIncoming
+}
+
+func (n Neighbor) RouteMapOutgoing() string {
+	return n.IPv4Unicast().RouteMapOutgoing
 }
 
 func (n *Neighbor) drain() error {
@@ -54,7 +72,7 @@ func (n *Neighbor) drain() error {
 	err = exec.Command(
 		"vtysh", "-c",
 		"configure terminal", "-c",
-		"route-map "+n.Af.IPv4Unicast.RouteMapOutgoing+" permit 1", "-c",
+		"route-map "+n.RouteMapOutgoing()+" permit 1", "-c",
 		"set as-path prepend 47583 47583", "-c",
 		"on-match next",
 	).Run()
@@ -66,7 +84,7 @@ func (n *Neighbor) drain() error {
 	err = exec.Command(
 		"vtysh", "-c",
 		"configure terminal", "-c",
-		"route-map "+n.Af.IPv4Unicast.RouteMapIncoming+" permit 1", "-c",
+		"route-map "+n.RouteMapIncoming()+" permit 1", "-c",
 		"set local-preference 50", "-c",
 		"on-match next",
 	).Run()
@@ -80,7 +98,7 @@ func (n *Neighbor) undrain() error {
 	err = exec.Command(
 		"vtysh", "-c",
 		"configure terminal", "-c",
-		"no route-map "+n.Af.IPv4Unicast.RouteMapOutgoing+" permit 1",
+		"no route-map "+n.RouteMapOutgoing()+" permit 1",
 	).Run()
 
 	if err != nil {
@@ -90,7 +108,7 @@ func (n *Neighbor) undrain() error {
 	err = exec.Command(
 		"vtysh", "-c",
 		"configure terminal", "-c",
-		"no route-map "+n.Af.IPv4Unicast.RouteMapIncoming+" permit 1",
+		"no route-map "+n.RouteMapIncoming()+" permit 1",
 	).Run()
 
 	return err
@@ -204,7 +222,10 @@ func (d *Decider) Run(dst string) {
 			time.Sleep(*probeInterval)
 		}
 		if neighbor.failed() && !d.allNeighborsFailed() {
-			d.logger.Warn("Draining traffic", zap.String("Neighbor", neighbor.RemoteIP))
+			d.logger.Warn("Draining traffic",
+				zap.String("Neighbor", neighbor.RemoteIP),
+				zap.String("RouteMapIncoming", neighbor.RouteMapIncoming()),
+				zap.String("RouteMapOutgoing", neighbor.RouteMapOutgoing()))
 			if *dryRun {
 				continue
 			}
@@ -212,7 +233,10 @@ func (d *Decider) Run(dst string) {
 				d.logger.Error("unable to drain", zap.Error(err))
 			}
 		} else {
-			d.logger.Warn("Undraining traffic", zap.String("Neighbor", neighbor.RemoteIP))
+			d.logger.Warn("Undraining traffic",
+				zap.String("Neighbor", neighbor.RemoteIP),
+				zap.String("RouteMapIncoming", neighbor.RouteMapIncoming()),
+				zap.String("RouteMapOutgoing", neighbor.RouteMapOutgoing()))
 			if *dryRun {
 				continue
 			}
