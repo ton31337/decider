@@ -268,7 +268,7 @@ func newDecider() (*Decider, error) {
 
 	neighbors, err := getNeighbors()
 	if err != nil {
-		return s, errors.New("can't fetch BGP neighbors")
+		return s, err
 	}
 
 	if len(neighbors) == 0 {
