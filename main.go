@@ -8,7 +8,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lorenzosaino/go-sysctl"
@@ -309,6 +311,9 @@ func main() {
 	}
 	dst := flag.Arg(0)
 
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
 	d, err := newDecider()
 	if err != nil {
 		d.logger.Error("unable to create Decider object", zap.Error(err))
@@ -327,6 +332,12 @@ func main() {
 		d.logger.Error("unable to set sysctl (net.ipv4.ip_local_reserved_ports)", zap.Error(err))
 		return
 	}
+
+	go func() {
+		<-c
+		d.undrainAll()
+		os.Exit(0)
+	}()
 
 	d.undrainAll()
 	for {
