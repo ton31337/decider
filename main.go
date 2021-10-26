@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lorenzosaino/go-sysctl"
+	sysctl "github.com/lorenzosaino/go-sysctl"
 	"github.com/vishvananda/netlink"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -137,16 +137,23 @@ func (d *Decider) createRoute(nr netlink.Route) error {
 	return err
 }
 
-func (d *Decider) undrainAll() {
+func (d *Decider) undrainAll() error {
+	var err error
+
 	for _, neighbor := range d.Neighbors {
-		neighbor.undrain()
+		if err := neighbor.undrain(); err != nil {
+			return err
+		}
 	}
+
 	d.removeAllRoutes()
+
+	return err
 }
 
 func (d *Decider) removeAllRoutes() {
 	for _, route := range d.Routes {
-		netlink.RouteDel(&route)
+		_ = netlink.RouteDel(&route)
 	}
 }
 
@@ -305,7 +312,9 @@ func getNeighbors() (Neighbors, error) {
 		return nil, err
 	}
 
-	json.Unmarshal([]byte(output), &neighbors)
+	if err := json.Unmarshal([]byte(output), &neighbors); err != nil {
+		return nil, err
+	}
 
 	for neighbor, params := range neighbors {
 		if (params.RemoteAS >= 64512 && params.RemoteAS <= 65534) ||
@@ -352,11 +361,17 @@ func main() {
 
 	go func() {
 		<-c
-		d.undrainAll()
+		if err := d.undrainAll(); err != nil {
+			d.logger.Error("unable to undrain all neighbors", zap.Error(err))
+		}
 		os.Exit(0)
 	}()
 
-	d.undrainAll()
+	if err := d.undrainAll(); err != nil {
+		d.logger.Error("unable to undrain all neighbors", zap.Error(err))
+		return
+	}
+
 	for {
 		d.Run()
 		time.Sleep(1 * time.Second)
