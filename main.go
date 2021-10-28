@@ -22,6 +22,7 @@ import (
 
 var startSrcPort = flag.Int("startSrcPort", 45000, "The base source port to start probing from")
 var endSrcPort = flag.Int("endSrcPort", 46000, "The base source port to end probing")
+var srcAddr = flag.String("srcAddr", "", "The source address for probes")
 var failuresCount = flag.Int("failuresCount", 100, "Failures count to depreference the peer")
 var probeInterval = flag.Duration("probeInterval", time.Second, "Interval between probes")
 var dryRun = flag.Bool("dryRun", true, "Dry-run mode")
@@ -184,7 +185,7 @@ func (d *Decider) Run() {
 		for !neighbor.failed() && sPort < *endSrcPort {
 			d.logger.Debug("Probing connection",
 				zap.String("Destination", d.Destination),
-				zap.String("Source", neighbor.LocalIP),
+				zap.String("Source", *srcAddr),
 				zap.String("Via", neighbor.RemoteIP),
 				zap.Int("Failures", neighbor.Failures),
 				zap.Int("SourcePort", sPort))
@@ -218,7 +219,7 @@ func (d *Decider) Run() {
 
 			d.logger.Debug("Successful connection",
 				zap.String("Destination", d.Destination),
-				zap.String("Source", neighbor.LocalIP),
+				zap.String("Source", *srcAddr),
 				zap.String("Via", neighbor.RemoteIP),
 				zap.Int("SourcePort", sPort))
 			sPort++
@@ -285,14 +286,18 @@ func newDecider(dst string) (*Decider, error) {
 
 func createRoutes(neighbors Neighbors, dst string) map[string]netlink.Route {
 	routes := make(map[string]netlink.Route)
+	src := *srcAddr
 
 	for _, neighbor := range neighbors {
+		if len(*srcAddr) == 0 {
+			src = neighbor.LocalIP
+		}
 		nr := netlink.Route{
 			Dst: &net.IPNet{
 				IP:   net.ParseIP(dst),
 				Mask: net.IPv4Mask(255, 255, 255, 255),
 			},
-			Src:      net.ParseIP(neighbor.LocalIP),
+			Src:      net.ParseIP(src),
 			Protocol: unix.RTPROT_KERNEL,
 			Table:    unix.RT_TABLE_MAIN,
 			Type:     unix.RTN_UNICAST,
