@@ -22,6 +22,7 @@ import (
 
 var startSrcPort = flag.Int("startSrcPort", 45000, "The base source port to start probing from")
 var endSrcPort = flag.Int("endSrcPort", 46000, "The base source port to end probing")
+var dstPort = flag.Int("dstPort", 9100, "The destination port for probes")
 var srcAddr = flag.String("srcAddr", "", "The source address for probes")
 var failuresCount = flag.Int("failuresCount", 100, "Failures count to depreference the peer")
 var probeInterval = flag.Duration("probeInterval", time.Second, "Interval between probes")
@@ -195,7 +196,7 @@ func (d *Decider) Run() {
 				Port: sPort,
 			}, &net.TCPAddr{
 				IP:   net.ParseIP(d.Destination),
-				Port: 9100,
+				Port: *dstPort,
 			})
 			if err != nil {
 				d.logger.Error("unable to create TCP connection", zap.Error(err),
