@@ -75,6 +75,10 @@ func (n Neighbor) RouteMapOutgoing() string {
 func (n *Neighbor) drain() error {
 	var err error
 
+	if *dryRun {
+		return err
+	}
+
 	err = exec.Command(
 		"vtysh", "-c",
 		"configure terminal", "-c",
@@ -100,6 +104,10 @@ func (n *Neighbor) drain() error {
 
 func (n *Neighbor) undrain() error {
 	var err error
+
+	if *dryRun {
+		return err
+	}
 
 	err = exec.Command(
 		"vtysh", "-c",
@@ -154,6 +162,10 @@ func (d *Decider) undrainAll() error {
 }
 
 func (d *Decider) removeAllRoutes() {
+	if *dryRun {
+		return
+	}
+
 	for _, route := range d.Routes {
 		_ = netlink.RouteDel(&route)
 	}
