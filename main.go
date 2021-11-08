@@ -133,14 +133,7 @@ func (n *Neighbor) failed() bool {
 }
 
 func (d *Decider) createRoute(nr netlink.Route) error {
-	var err error
-
-	err = netlink.RouteReplace(&nr)
-	if err != nil {
-		return err
-	}
-
-	return err
+	return netlink.RouteReplace(&nr)
 }
 
 func (d *Decider) undrainAll() error {
