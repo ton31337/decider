@@ -323,7 +323,7 @@ func getNeighbors() (Neighbors, error) {
 
 	output, err := exec.Command("vtysh", "-c", "show ip bgp neighbors json").Output()
 	if err != nil {
-		return nil, err
+		return nil, errors.New("failed `show ip bgp neighbors json`")
 	}
 
 	if err := json.Unmarshal([]byte(output), &neighbors); err != nil {
